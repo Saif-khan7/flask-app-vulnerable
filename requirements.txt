@@ -1,9 +1,9 @@
-# Flask (use a version with known vulnerabilities)
+# Flask with known vulnerabilities
 Flask==0.12.3  # CVE-2018-1000656, CVE-2019-1010083
 
-# Add other vulnerable packages
+# Compatible vulnerable packages
 Jinja2==2.10.1  # CVE-2019-10906
-urllib3==1.24.1  # CVE-2019-11324
+urllib3==1.23  # Compatible with requests 2.19.1, CVE-2019-11324
 requests==2.19.1  # CVE-2018-18074
 
 # Security Tools

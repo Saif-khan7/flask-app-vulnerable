@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Security Scan Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        h1 { text-align: center; }
+        h2 { color: #2F4F4F; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #dddddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .error { background-color: #f8d7da; }
+        .warning { background-color: #fff3cd; }
+        .info { background-color: #d1ecf1; }
+        .error {
+            background-color: #f8d7da;
+        }
+        .warning {
+            background-color: #fff3cd;
+        }
+        .info {
+            background-color: #d1ecf1;
+        }
+    </style>
+</head>
+<body>
+    <h1>🛡️ Security Scan Report</h1>
+
+    {% for tool in tools %}
+        <h2>{{ tool.name }}</h2>
+        {% if tool.errors %}
+            <h3>Errors</h3>
+            <ul>
+                {% for error in tool.errors %}
+                    <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+        {% if tool.results %}
+            <table>
+                <thead>
+                    <tr>
+                        {% for header in tool.headers %}
+                            <th>{{ header }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for result in tool.results %}
+                        <tr class="{{ result.severity|lower }}">
+                            {% for key in tool.columns %}
+                                <td>{{ result[key] }}</td>
+                            {% endfor %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>No issues found.</p>
+        {% endif %}
+    {% endfor %}
+</body>
+</html>

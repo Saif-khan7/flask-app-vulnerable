@@ -28,9 +28,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # Install security tools
-          pip install bandit pylint semgrep
-          # Install jq for JSON processing
+          pip install bandit safety pylint semgrep Jinja2 weasyprint
+          # Install system dependencies for WeasyPrint
           sudo apt-get update
+          sudo apt-get install -y libpango1.0-0 libgdk-pixbuf2.0-0 libffi-dev libcairo2
+          # Install jq for JSON processing
           sudo apt-get install -y jq
 
       # Step 4: Run Flake8 Linting
@@ -52,27 +54,42 @@ jobs:
       # Step 7: Code Quality Analysis with Pylint
       - name: Run Pylint
         run: |
-          pylint **/*.py --output-format=json:pylint-report.json || true
+          pylint **/*.py --output-format=json > pylint-report.json || true
 
-      # Step 8: Fail Workflow on High Severity Vulnerabilities
+      # Step 8: Dependency Vulnerability Scanning with Safety
+      - name: Run Safety Dependency Scan
+        run: |
+          safety check -r requirements.txt -f json > safety-report.json || echo '{"vulnerabilities": []}' > safety-report.json
+        continue-on-error: true
+
+      # Step 9: Fail Workflow on High Severity Vulnerabilities
       - name: Fail on High Severity Vulnerabilities
         run: |
+          # Safety
+          CRITICAL_SAFETY=$(jq '[.vulnerabilities[] | select(.severity=="high" or .severity=="critical")] | length' safety-report.json)
+
           # Bandit
           CRITICAL_BANDIT=$(jq '[.results[] | select(.issue_severity=="HIGH" or .issue_severity=="CRITICAL")] | length' bandit-report.json)
 
           # Semgrep
-          CRITICAL_SEMGREP=$(jq '[.results[] | select(.severity=="ERROR" or .severity=="WARNING")] | length' semgrep-report.json)
+          CRITICAL_SEMGREP=$(jq '[.results[] | select(.extra.severity=="ERROR" or .extra.severity=="WARNING")] | length' semgrep-report.json)
 
           echo "Critical Bandit Issues: $CRITICAL_BANDIT"
+          echo "Critical Safety Vulnerabilities: $CRITICAL_SAFETY"
           echo "Critical Semgrep Findings: $CRITICAL_SEMGREP"
 
-          if [ "$CRITICAL_BANDIT" -gt 0 ] || [ "$CRITICAL_SEMGREP" -gt 0 ]; then
+          if [ "$CRITICAL_BANDIT" -gt 0 ] || [ "$CRITICAL_SAFETY" -gt 0 ] || [ "$CRITICAL_SEMGREP" -gt 0 ]; then
             echo "Critical vulnerabilities found. Failing the build."
             exit 1
           fi
         shell: bash
 
-      # Step 9: Collect Reports
+      # Step 10: Generate PDF Report
+      - name: Generate PDF Security Report
+        run: |
+          python generate_report.py
+
+      # Step 11: Collect Reports
       - name: Upload Bandit Report
         if: always()
         uses: actions/upload-artifact@v3
@@ -94,7 +111,21 @@ jobs:
           name: pylint-report
           path: pylint-report.json
 
-      # Step 10: Generate Summary and Comment on PR
+      - name: Upload Safety Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: safety-report
+          path: safety-report.json
+
+      - name: Upload PDF Security Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-report-pdf
+          path: reports/security_report.pdf
+
+      # Step 12: Generate Summary and Comment on PR
       - name: Generate and Post Security Summary
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v6
@@ -102,8 +133,10 @@ jobs:
           script: |
             const fs = require('fs');
             const banditReportPath = 'bandit-report.json';
+            const safetyReportPath = 'safety-report.json';
             const semgrepReportPath = 'semgrep-report.json';
             const pylintReportPath = 'pylint-report.json';
+            const securityReportPath = 'reports/security_report.pdf';
 
             // Function to safely parse JSON
             const parseJson = (path) => {
@@ -121,6 +154,7 @@ jobs:
 
             // Read Reports
             let banditReport = parseJson(banditReportPath) || { results: [] };
+            let safetyReport = parseJson(safetyReportPath) || { vulnerabilities: [] };
             let semgrepReport = parseJson(semgrepReportPath) || { results: [] };
             let pylintReport = parseJson(pylintReportPath) || [];
 
@@ -149,10 +183,10 @@ jobs:
             if (semgrepReport.results.length > 0) {
               summary += "| Severity | Message | File | Line |\n| --- | --- | --- | --- |\n";
               semgrepReport.results.forEach(issue => {
-                const severity = issue.severity || (issue.extra && issue.extra.severity) || 'UNKNOWN';
-                const message = (issue.message || (issue.extra && issue.extra.message) || '').replace(/\|/g, '\\|');
-                const filePath = issue.path || issue.filename || 'N/A';
-                const lineNumber = (issue.start && issue.start.line) || 'N/A';
+                const severity = issue.severity || 'UNKNOWN';
+                const message = (issue.message || '').replace(/\|/g, '\\|');
+                const filePath = issue.path || 'N/A';
+                const lineNumber = issue.start_line || 'N/A';
                 summary += `| ${severity} | ${message} | ${filePath} | ${lineNumber} |\n`;
               });
             } else {
@@ -167,7 +201,7 @@ jobs:
               summary += "| Type | Message | Module | Line |\n| --- | --- | --- | --- |\n";
               pylintReport.forEach(issue => {
                 const issueType = issue.type || 'UNKNOWN';
-                const message = (issue.message || '').replace(/\|/g, '\\|');
+                const message = issue.message || '';
                 const module = issue.module || 'N/A';
                 const lineNumber = issue.line || 'N/A';
                 summary += `| ${issueType} | ${message} | ${module} | ${lineNumber} |\n`;
@@ -175,6 +209,30 @@ jobs:
             } else {
               summary += "No issues found by Pylint.\n";
             }
+
+            summary += "\n";
+
+            // Safety Results
+            summary += `### 📦 Safety Dependency Findings: ${safetyReport.vulnerabilities.length} vulnerability(ies) found\n\n`;
+            if (safetyReport.vulnerabilities.length > 0) {
+              summary += "| Package | Vulnerability | Severity |\n| --- | --- | --- |\n";
+              safetyReport.vulnerabilities.forEach(vuln => {
+                const packageName = vuln.package_name || 'N/A';
+                const vulnDescription = (vuln.advisory || '').replace(/\|/g, '\\|');
+                const severity = vuln.severity || 'N/A';
+                summary += `| ${packageName} | ${vulnDescription} | ${severity} |\n`;
+              });
+            } else {
+              summary += "No vulnerabilities found by Safety.\n";
+            }
+
+            summary += "\n";
+
+            // Attach PDF Report
+            const pdfAttachment = fs.readFileSync(securityReportPath, { encoding: 'base64' });
+            const pdfLink = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.run_id}/artifacts/${process.env.GITHUB_RUN_ID}/download/security_report.pdf`;
+
+            summary += `### 📄 Full Security Report\n[Download PDF Report](${pdfLink})\n`;
 
             // Post the summary as a comment
             const commentBody = summary;

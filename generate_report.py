@@ -1,153 +1,53 @@
 import json
-import os
-from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
+import pdfkit
 
-# Define the paths to your JSON reports
-REPORTS_DIR = 'artifacts'  # Adjust this path if your artifacts are stored elsewhere
-OUTPUT_DIR = 'reports'
-TEMPLATE_DIR = 'templates'
+# Load JSON files
+with open('bandit-report.json') as bandit_file:
+    bandit_data = json.load(bandit_file)
 
-# Ensure the output directory exists
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+with open('safety-report.json') as safety_file:
+    safety_data = json.load(safety_file)
 
-# Initialize Jinja2 environment
-env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
-template = env.get_template('report_template.html')
+with open('semgrep-report.json') as semgrep_file:
+    semgrep_data = json.load(semgrep_file)
 
-# Function to load a JSON file
-def load_json(file_path):
-    with open(file_path, 'r') as f:
-        return json.load(f)
+# Create HTML content for the PDF
+html_out = "<h1>Security Scan Report</h1>"
 
-# Function to process Semgrep report
-def process_semgrep(report):
-    tool = {
-        'name': 'Semgrep',
-        'headers': ['Check ID', 'Severity', 'Message', 'File', 'Line'],
-        'columns': ['check_id', 'severity', 'message', 'path', 'start_line'],
-        'results': [],
-        'errors': []
-    }
-    if 'errors' in report:
-        for error in report['errors']:
-            tool['errors'].append(error['message'])
-    
-    for result in report.get('results', []):
-        tool['results'].append({
-            'check_id': result.get('check_id', ''),
-            'severity': result.get('severity', ''),
-            'message': result.get('extra', {}).get('message', ''),
-            'path': result.get('path', ''),
-            'start_line': result.get('start', {}).get('line', '')
-        })
-    return tool
+# Bandit Report
+html_out += "<h2>Bandit Report</h2>"
+if bandit_data.get("results"):
+    html_out += "<table border='1'><tr><th>Severity</th><th>Issue</th><th>File</th><th>Line</th></tr>"
+    for result in bandit_data["results"]:
+        html_out += f"<tr><td>{result['issue_severity']}</td><td>{result['issue_text']}</td><td>{result['filename']}</td><td>{result['line_number']}</td></tr>"
+    html_out += "</table>"
+else:
+    html_out += "<p>No issues found by Bandit.</p>"
 
-# Function to process Bandit report
-def process_bandit(report):
-    tool = {
-        'name': 'Bandit',
-        'headers': ['Issue Severity', 'Issue', 'File', 'Line'],
-        'columns': ['issue_severity', 'issue_text', 'filename', 'line_number'],
-        'results': [],
-        'errors': []
-    }
-    for issue in report.get('results', []):
-        tool['results'].append({
-            'issue_severity': issue.get('issue_severity', ''),
-            'issue_text': issue.get('issue_text', ''),
-            'filename': issue.get('filename', ''),
-            'line_number': issue.get('line_number', '')
-        })
-    return tool
+# Safety Report
+html_out += "<h2>Safety Report</h2>"
+if safety_data.get("vulnerabilities"):
+    html_out += "<table border='1'><tr><th>Package</th><th>Vulnerability</th><th>Severity</th></tr>"
+    for vulnerability in safety_data["vulnerabilities"]:
+        html_out += f"<tr><td>{vulnerability['package_name']}</td><td>{vulnerability['vulnerability']}</td><td>{vulnerability['severity']}</td></tr>"
+    html_out += "</table>"
+else:
+    html_out += "<p>No vulnerabilities found by Safety.</p>"
 
-# Function to process Pylint report
-def process_pylint(report):
-    tool = {
-        'name': 'Pylint',
-        'headers': ['Type', 'Message', 'Module', 'Line'],
-        'columns': ['type', 'message', 'module', 'line'],
-        'results': [],
-        'errors': []
-    }
-    for issue in report:
-        tool['results'].append({
-            'type': issue.get('type', ''),
-            'message': issue.get('message', ''),
-            'module': issue.get('module', ''),
-            'line': issue.get('line', '')
-        })
-    return tool
+# Semgrep Report
+html_out += "<h2>Semgrep Report</h2>"
+if semgrep_data.get("results"):
+    html_out += "<table border='1'><tr><th>Severity</th><th>Message</th><th>File</th><th>Line</th></tr>"
+    for result in semgrep_data["results"]:
+        html_out += f"<tr><td>{result['severity']}</td><td>{result['extra']['message']}</td><td>{result['path']}</td><td>{result['start']['line']}</td></tr>"
+    html_out += "</table>"
+else:
+    html_out += "<p>No issues found by Semgrep.</p>"
 
-# Function to process Safety report
-def process_safety(report):
-    tool = {
-        'name': 'Safety',
-        'headers': ['Package', 'Vulnerability', 'Severity'],
-        'columns': ['package_name', 'advisory', 'severity'],
-        'results': [],
-        'errors': []
-    }
-    for vuln in report.get('vulnerabilities', []):
-        tool['results'].append({
-            'package_name': vuln.get('package_name', ''),
-            'advisory': vuln.get('advisory', ''),
-            'severity': vuln.get('severity', '')
-        })
-    return tool
+# Output PDF file name
+pdf_file = "Security_Scan_Report.pdf"
 
-# Add more processing functions for other tools if needed
+# Generate PDF
+pdfkit.from_string(html_out, pdf_file)
 
-def main():
-    tools = []
-
-    # Process Semgrep Report
-    semgrep_path = os.path.join(REPORTS_DIR, 'semgrep-report.json')
-    if os.path.exists(semgrep_path):
-        semgrep_report = load_json(semgrep_path)
-        tools.append(process_semgrep(semgrep_report))
-    else:
-        print(f"Semgrep report not found at {semgrep_path}")
-
-    # Process Bandit Report
-    bandit_path = os.path.join(REPORTS_DIR, 'bandit-report.json')
-    if os.path.exists(bandit_path):
-        bandit_report = load_json(bandit_path)
-        tools.append(process_bandit(bandit_report))
-    else:
-        print(f"Bandit report not found at {bandit_path}")
-
-    # Process Pylint Report
-    pylint_path = os.path.join(REPORTS_DIR, 'pylint-report.json')
-    if os.path.exists(pylint_path):
-        pylint_report = load_json(pylint_path)
-        tools.append(process_pylint(pylint_report))
-    else:
-        print(f"Pylint report not found at {pylint_path}")
-
-    # Process Safety Report
-    safety_path = os.path.join(REPORTS_DIR, 'safety-report.json')
-    if os.path.exists(safety_path):
-        safety_report = load_json(safety_path)
-        tools.append(process_safety(safety_report))
-    else:
-        print(f"Safety report not found at {safety_path}")
-
-    # Add more tool processing as needed
-
-    # Render HTML using the template
-    html_out = template.render(tools=tools)
-
-    # Write the HTML to a file (optional)
-    html_file = os.path.join(OUTPUT_DIR, 'security_report.html')
-    with open(html_file, 'w') as f:
-        f.write(html_out)
-    print(f"HTML report generated at {html_file}")
-
-    # Convert HTML to PDF
-    pdf_file = os.path.join(OUTPUT_DIR, 'security_report.pdf')
-    HTML(string=html_out).write_pdf(pdf_file)
-    print(f"PDF report generated at {pdf_file}")
-
-if __name__ == '__main__':
-    main()
+print(f"PDF report generated: {pdf_file}")

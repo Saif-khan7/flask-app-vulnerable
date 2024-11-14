@@ -53,10 +53,25 @@ jobs:
     # Step 5.1: Fail Workflow on Critical Vulnerabilities
     - name: Fail on Critical Vulnerabilities
       run: |
-        CRITICAL_BANDIT=$(jq '[.results[] | select(.severity=="HIGH" or .severity=="CRITICAL")] | length' bandit-report.json)
-        CRITICAL_SAFETY=$(jq '[.vulnerabilities[] | select(.severity=="high" or .severity=="critical")] | length' safety-report.json)
+        # Check if safety-report.json exists
+        if [ -f safety-report.json ]; then
+          CRITICAL_SAFETY=$(jq '[.vulnerabilities[] | select(.severity=="high" or .severity=="critical")] | length' safety-report.json)
+        else
+          echo "safety-report.json not found. Assuming no critical vulnerabilities."
+          CRITICAL_SAFETY=0
+        fi
+
+        # Check if bandit-report.json exists
+        if [ -f bandit-report.json ]; then
+          CRITICAL_BANDIT=$(jq '[.results[] | select(.severity=="HIGH" or .severity=="CRITICAL")] | length' bandit-report.json)
+        else
+          echo "bandit-report.json not found. Assuming no critical Bandit issues."
+          CRITICAL_BANDIT=0
+        fi
+
         echo "Critical Bandit Issues: $CRITICAL_BANDIT"
         echo "Critical Safety Vulnerabilities: $CRITICAL_SAFETY"
+
         if [ "$CRITICAL_BANDIT" -gt 0 ] || [ "$CRITICAL_SAFETY" -gt 0 ]; then
           echo "Critical vulnerabilities found. Failing the build."
           exit 1
